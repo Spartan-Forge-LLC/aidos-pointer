@@ -1,4 +1,28 @@
-# AIDOS — Read This First
+# aidos-pointer
+
+> **Project:** AIDOS  
+> AIDOS: public pointer telling AI tools to read the real Engineering Contract in the aidos repo.
+
+## Purpose
+AIDOS: public pointer telling AI tools to read the real Engineering Contract in the aidos repo.
+
+## Stack
+Docs
+
+## Top-level contents
+- `.github`
+- `README.md`
+
+## Rename risk
+Repo names may be cleaned up later. Risk/dependencies to check before renaming: MED: AI chat project instructions may link it
+
+## Owner
+John Cline (Spartan Forge LLC / Fitli Inc.)
+
+---
+
+## Previous README (preserved)
+## AIDOS — Read This First
 
 Before finalizing any engineering response, read the canonical Engineering Contract:
 

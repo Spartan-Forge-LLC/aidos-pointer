@@ -1,0 +1,76 @@
+# Label wake-up for for:tina (process-pilot / aidos-bots #78 pattern; John t1268u, Nov 13, 2026).
+# One `issues: labeled` event with `for:tina` -> one POST to Tina's Grok Bot routine webhook.
+# No LLM in this path. Payload is only {"issue_url","label"}; the bot reads the issue itself.
+# Secrets (org Actions secrets, never in the repo): WAKE_TINA_URL, WAKE_TINA_KEY.
+# Missing secrets: notice + skip, exit 0.
+# On non-2xx: fail the job (visible in Actions). No issue comments, no extra labels.
+name: wake
+
+on:
+  issues:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  group: wake-${{ github.event.issue.number }}-${{ github.event.label.name }}
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    if: github.event.label.name == 'for:tina'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Wake Tina
+        shell: bash
+        env:
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          LABEL: ${{ github.event.label.name }}
+          TINA_URL: ${{ secrets.WAKE_TINA_URL }}
+          TINA_KEY: ${{ secrets.WAKE_TINA_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TINA_URL}" ] || [ -z "${TINA_KEY}" ]; then
+            echo "::notice::WAKE_TINA_URL or WAKE_TINA_KEY is not set; wake skipped for $LABEL"
+            exit 0
+          fi
+          echo "::add-mask::$TINA_KEY"
+
+          BODY=$(jq -cn --arg u "$ISSUE_URL" --arg l "$LABEL" '{issue_url:$u,label:$l}')
+          NOW=$(date -u +%s)
+
+          # Authorization: the routine panel shows "Authorization: Bearer <key>". Accept the key pasted
+          # with or without the "Authorization:" label; add "Bearer " only to a bare token (Pingdum #72 rule).
+          AUTH=$(printf '%s' "$TINA_KEY" | sed -E 's/^[[:space:]]*[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn][[:space:]]*:[[:space:]]*//; s/[[:space:]]+$//')
+          case "$AUTH" in *" "*) ;; *) AUTH="Bearer $AUTH" ;; esac
+          TOKEN=${AUTH#* }
+          echo "::add-mask::$TOKEN"
+
+          # Standard Webhooks signature as well (xAI automation webhook format).
+          # whsec_<base64> is decoded; any other key is used as raw bytes.
+          WID="msg_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          SIG=$(WID="$WID" TS="$NOW" BODY="$BODY" K="$TOKEN" python3 -c '
+          import base64, hashlib, hmac, os
+          k = os.environ["K"]
+          try:
+              key = base64.b64decode(k[6:], validate=True) if k.startswith("whsec_") else k.encode()
+          except Exception:
+              key = k.encode()
+          e = os.environ
+          msg = (e["WID"] + "." + e["TS"] + "." + e["BODY"]).encode()
+          print(base64.b64encode(hmac.new(key, msg, hashlib.sha256).digest()).decode())')
+
+          HDRS=$(mktemp); chmod 600 "$HDRS"
+          printf 'authorization: %s\ncontent-type: application/json\nwebhook-id: %s\nwebhook-timestamp: %s\nwebhook-signature: v1,%s\n' \
+            "$AUTH" "$WID" "$NOW" "$SIG" > "$HDRS"
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H @"$HDRS" --data-raw "$BODY" "$TINA_URL") || true
+          CODE=${CODE:-000}
+          rm -f "$HDRS"
+
+          if [ "${CODE:0:1}" = "2" ]; then
+            echo "::notice::woke $LABEL for $ISSUE_URL (HTTP $CODE)"
+          else
+            echo "::error::wake for $LABEL on $ISSUE_URL failed (HTTP $CODE); no retry"
+            exit 1
+          fi
